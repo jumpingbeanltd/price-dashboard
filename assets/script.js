@@ -1718,7 +1718,7 @@ async function syncProductToShopify(sku, rewritten) {
         fullDescription = rewritten.rewrittenDescription;
     }
     if (rewritten.rewrittenProductUses) {
-        fullDescription += `\n<h2 class="card__title heading h3 h2">Product Uses</h2>\n${rewritten.rewrittenProductUses}`;
+        fullDescription += `<br><h2 class="card__title heading h3 h2">Product Uses</h2><br>${rewritten.rewrittenProductUses}`;
     }
 
     const response = await fetch('/api/shopify/sync', {
