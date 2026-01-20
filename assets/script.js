@@ -315,7 +315,8 @@ function renderTable() {
         const set1Cost = product.set1?.cost;
         const set1Stock = product.set1?.stock;
         const set2Cost = product.set2?.cost;
-        const productName = product.set1?.name || 'Unknown';
+        const fullName = product.set1?.name || 'Unknown';
+        const productName = fullName.length > 64 ? fullName.substring(0, 64) + '...' : fullName;
         const diff = calculateDiff(product);
         const markup = calculateMarkup(product);
 
@@ -342,7 +343,7 @@ function renderTable() {
             </td>
             <td class="px-2 py-1.5 text-gray-700">${product.sku}</td>
             <td class="px-2 py-1.5 text-gray-600">${formatStock(set1Stock)}</td>
-            <td class="px-2 py-1.5 text-gray-900" title="${productName}">${productName}</td>
+            <td class="px-2 py-1.5 text-gray-900" title="${fullName}">${productName}</td>
             <td class="px-2 py-1.5 font-medium text-blue-700">${formatPrice(set1Cost)}</td>
             <td class="px-2 py-1.5 font-medium text-green-700">${formatPrice(set2Cost)}</td>
             <td class="px-2 py-1.5 font-medium ${diffColor}">${formatDiff(diff)}</td>
