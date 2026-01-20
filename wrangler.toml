@@ -1,0 +1,10 @@
+name = "shrill-wood-f1c3"
+account_id = "28659119f09a7b47c5ec091bd0bf1d17"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+assets = { directory = "./assets", binding = "ASSETS" }
+
+routes = [
+  { pattern = "dashboard.popid.ie", custom_domain = true }
+]

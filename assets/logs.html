@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Change Logs - Product Pricing Dashboard v1.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body class="bg-white text-gray-900 font-sans">
+    <div class="max-w-4xl mx-auto px-4 py-6">
+        <div class="flex items-center justify-between mb-4">
+            <h1 class="text-xl font-semibold">Change Logs</h1>
+            <div class="flex gap-2">
+                <button id="clear-logs" class="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-md hover:bg-red-50">
+                    Clear All Logs
+                </button>
+                <a href="/" class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50">
+                    Back to Dashboard
+                </a>
+            </div>
+        </div>
+
+        <div id="log-stats" class="text-sm text-gray-500 mb-4"></div>
+
+        <div class="border border-gray-200 rounded-lg overflow-hidden">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                        <th class="px-3 py-2 text-left font-medium text-gray-600">Timestamp</th>
+                        <th class="px-3 py-2 text-left font-medium text-gray-600">SKU</th>
+                        <th class="px-3 py-2 text-right font-medium text-gray-600">Cost Price</th>
+                        <th class="px-3 py-2 text-right font-medium text-gray-600">Selling Price</th>
+                        <th class="px-3 py-2 text-center font-medium text-gray-600">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="log-table-body">
+                </tbody>
+            </table>
+        </div>
+
+        <div id="no-logs" class="hidden text-center py-8 text-gray-500">
+            No logs found. Push some prices to Zoho to see changes here.
+        </div>
+
+        <footer class="mt-6 pt-4 border-t border-gray-200 text-xs text-gray-400 text-center">
+            Product Pricing Dashboard v1.0
+        </footer>
+    </div>
+
+    <script>
+        const LOG_STORAGE_KEY = 'price_dashboard_logs';
+
+        function getLogs() {
+            try {
+                const stored = localStorage.getItem(LOG_STORAGE_KEY);
+                return stored ? JSON.parse(stored) : [];
+            } catch {
+                return [];
+            }
+        }
+
+        function clearLogs() {
+            localStorage.removeItem(LOG_STORAGE_KEY);
+            renderLogs();
+        }
+
+        function formatTimestamp(isoString) {
+            const date = new Date(isoString);
+            return date.toLocaleString('en-GB', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+
+        function renderLogs() {
+            const logs = getLogs();
+            const tableBody = document.getElementById('log-table-body');
+            const noLogsEl = document.getElementById('no-logs');
+            const logStatsEl = document.getElementById('log-stats');
+
+            if (logs.length === 0) {
+                tableBody.innerHTML = '';
+                noLogsEl.classList.remove('hidden');
+                logStatsEl.textContent = '';
+                return;
+            }
+
+            noLogsEl.classList.add('hidden');
+
+            const successCount = logs.filter(l => l.success).length;
+            const failCount = logs.filter(l => !l.success).length;
+            logStatsEl.textContent = `${logs.length} total entries | ${successCount} successful | ${failCount} failed`;
+
+            tableBody.innerHTML = logs.map(log => {
+                const statusClass = log.success
+                    ? 'bg-green-100 text-green-800'
+                    : 'bg-red-100 text-red-800';
+                const statusText = log.success ? 'Success' : 'Failed';
+                const errorTitle = log.error ? ` title="${log.error}"` : '';
+
+                return `
+                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                        <td class="px-3 py-2 text-gray-500 text-xs">${formatTimestamp(log.timestamp)}</td>
+                        <td class="px-3 py-2 font-medium">${log.sku}</td>
+                        <td class="px-3 py-2 text-right font-mono">${log.costPrice != null ? '€' + log.costPrice.toFixed(2) : '—'}</td>
+                        <td class="px-3 py-2 text-right font-mono">${log.sellingPrice != null ? '€' + log.sellingPrice.toFixed(2) : '—'}</td>
+                        <td class="px-3 py-2 text-center">
+                            <span class="px-2 py-0.5 rounded text-xs ${statusClass}"${errorTitle}>${statusText}</span>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        document.getElementById('clear-logs').addEventListener('click', () => {
+            if (confirm('Are you sure you want to clear all logs?')) {
+                clearLogs();
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', renderLogs);
+    </script>
+</body>
+</html>

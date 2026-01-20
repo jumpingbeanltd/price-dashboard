@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Wrangler
+.wrangler/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Build
+dist/
+
+# Large files/catalogues
+Digital ID Complete Catalogue/
+*.JPEG
+*.jpeg
+*.jpg
+*.JPG
+*.png
+*.PNG
+
+# Credentials/secrets
+*.json
+!package.json
+!package-lock.json
+
+# Data files
+*.csv

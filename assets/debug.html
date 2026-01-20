@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Debug Logs - Product Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        .log-entry { font-family: monospace; font-size: 0.75rem; }
+        .log-error { background-color: #fee2e2; }
+        .log-warn { background-color: #fef3c7; }
+        .log-info { background-color: #dbeafe; }
+        .log-success { background-color: #d1fae5; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+    <div class="max-w-6xl mx-auto px-4 py-6">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-xl font-semibold">Debug Logs</h1>
+            <div class="flex gap-2">
+                <button id="sync-to-server" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    Sync to Server
+                </button>
+                <button id="copy-for-claude" class="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-md hover:bg-purple-700 flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                    Copy for Claude
+                </button>
+                <button id="clear-logs" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded-md hover:bg-red-600">Clear Logs</button>
+                <button id="refresh-logs" class="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600">Refresh</button>
+                <a href="/" class="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-100">Back to Dashboard</a>
+            </div>
+        </div>
+        <div id="copy-toast" class="hidden fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg text-sm">
+            Copied to clipboard!
+        </div>
+
+        <div class="mb-4 flex gap-4 items-center">
+            <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" id="filter-error" checked class="rounded">
+                <span class="text-red-600">Errors</span>
+            </label>
+            <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" id="filter-warn" checked class="rounded">
+                <span class="text-yellow-600">Warnings</span>
+            </label>
+            <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" id="filter-info" checked class="rounded">
+                <span class="text-blue-600">Info</span>
+            </label>
+            <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" id="filter-success" checked class="rounded">
+                <span class="text-green-600">Success</span>
+            </label>
+            <span id="log-count" class="text-sm text-gray-500 ml-auto"></span>
+        </div>
+
+        <div class="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div id="logs-container" class="divide-y divide-gray-100 max-h-[70vh] overflow-y-auto">
+                <div class="p-4 text-center text-gray-500">Loading logs...</div>
+            </div>
+        </div>
+
+        <div class="mt-4 p-4 bg-gray-100 rounded-lg">
+            <h3 class="font-medium text-sm mb-2">Current Settings</h3>
+            <div id="settings-info" class="text-xs font-mono space-y-1"></div>
+        </div>
+
+        <footer class="mt-6 pt-4 border-t border-gray-200 text-xs text-gray-400 text-center">
+            Product Dashboard Debug | <a href="/" class="text-blue-500 hover:underline">Dashboard</a> | <a href="/logs.html" class="text-blue-500 hover:underline">Zoho Logs</a>
+        </footer>
+    </div>
+
+    <script>
+        const DEBUG_LOG_KEY = 'price_dashboard_debug_logs';
+        const API_KEYS_STORAGE_KEY = 'price_dashboard_api_keys';
+        const REWRITE_PROMPT_KEY = 'price_dashboard_rewrite_prompt';
+        const OPTIONS_STORAGE_KEY = 'price_dashboard_options';
+
+        function getLogs() {
+            try {
+                const stored = localStorage.getItem(DEBUG_LOG_KEY);
+                return stored ? JSON.parse(stored) : [];
+            } catch {
+                return [];
+            }
+        }
+
+        function clearLogs() {
+            localStorage.removeItem(DEBUG_LOG_KEY);
+            renderLogs();
+        }
+
+        function formatTimestamp(iso) {
+            const d = new Date(iso);
+            return d.toLocaleString('en-GB', {
+                day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+        }
+
+        function getVisibleTypes() {
+            const types = [];
+            if (document.getElementById('filter-error').checked) types.push('error');
+            if (document.getElementById('filter-warn').checked) types.push('warn');
+            if (document.getElementById('filter-info').checked) types.push('info');
+            if (document.getElementById('filter-success').checked) types.push('success');
+            return types;
+        }
+
+        function renderLogs() {
+            const logs = getLogs();
+            const container = document.getElementById('logs-container');
+            const visibleTypes = getVisibleTypes();
+
+            const filteredLogs = logs.filter(log => visibleTypes.includes(log.type));
+
+            document.getElementById('log-count').textContent = `${filteredLogs.length} of ${logs.length} entries`;
+
+            if (filteredLogs.length === 0) {
+                container.innerHTML = '<div class="p-4 text-center text-gray-500">No logs found</div>';
+                return;
+            }
+
+            container.innerHTML = filteredLogs.map(log => `
+                <div class="log-entry log-${log.type} p-3">
+                    <div class="flex justify-between items-start gap-4">
+                        <div class="flex-1">
+                            <span class="font-medium text-gray-700">[${log.type.toUpperCase()}]</span>
+                            <span class="text-gray-600">${log.category || 'general'}</span>
+                            <span class="text-gray-400">|</span>
+                            <span class="text-gray-800">${escapeHtml(log.message)}</span>
+                        </div>
+                        <span class="text-gray-400 text-xs whitespace-nowrap">${formatTimestamp(log.timestamp)}</span>
+                    </div>
+                    ${log.data ? `<pre class="mt-1 text-xs bg-gray-900 text-gray-100 p-2 rounded overflow-x-auto">${escapeHtml(JSON.stringify(log.data, null, 2))}</pre>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function renderSettings() {
+            const settingsEl = document.getElementById('settings-info');
+
+            let apiKeys, options, prompt;
+            try {
+                apiKeys = JSON.parse(localStorage.getItem(API_KEYS_STORAGE_KEY) || '{}');
+            } catch { apiKeys = {}; }
+            try {
+                options = JSON.parse(localStorage.getItem(OPTIONS_STORAGE_KEY) || '{}');
+            } catch { options = {}; }
+            prompt = localStorage.getItem(REWRITE_PROMPT_KEY);
+
+            const maskKey = (key) => key ? key.substring(0, 8) + '...' + key.substring(key.length - 4) : '(not set)';
+
+            settingsEl.innerHTML = `
+                <div><strong>Default LLM:</strong> ${apiKeys.defaultLlm || 'claude'}</div>
+                <div><strong>Claude Key:</strong> ${maskKey(apiKeys.claude)}</div>
+                <div><strong>OpenAI Key:</strong> ${maskKey(apiKeys.openai)}</div>
+                <div><strong>Gemini Key:</strong> ${maskKey(apiKeys.gemini)}</div>
+                <div><strong>Tensorix Key:</strong> ${maskKey(apiKeys.tensorix)}</div>
+                <div><strong>Tensorix Model:</strong> ${apiKeys.tensorixModel || 'openai/gpt-oss-20b'}</div>
+                <div><strong>Options:</strong> generateUsesIfEmpty=${options.generateUsesIfEmpty || false}, generateSeo=${options.generateSeo !== false}</div>
+                <div><strong>Custom Prompt:</strong> ${prompt ? 'Yes (' + prompt.length + ' chars)' : 'No (using default)'}</div>
+                <div class="mt-2 pt-2 border-t border-gray-300">
+                    <strong>Prompt includes SEO fields:</strong> ${(prompt || '').includes('htmlTitle') && (prompt || '').includes('metaDescription') ? '<span class="text-green-600">Yes</span>' : '<span class="text-red-600">No - this is why SEO is not generating!</span>'}
+                </div>
+            `;
+        }
+
+        function copyForClaude() {
+            const logs = getLogs().slice(0, 50); // Last 50 logs
+            let apiKeys, options, prompt;
+            try { apiKeys = JSON.parse(localStorage.getItem(API_KEYS_STORAGE_KEY) || '{}'); } catch { apiKeys = {}; }
+            try { options = JSON.parse(localStorage.getItem(OPTIONS_STORAGE_KEY) || '{}'); } catch { options = {}; }
+            prompt = localStorage.getItem(REWRITE_PROMPT_KEY);
+
+            const maskKey = (key) => key ? key.substring(0, 8) + '...' : '(not set)';
+
+            const report = `## Debug Report - Product Dashboard
+**Generated:** ${new Date().toISOString()}
+
+### Settings
+- **Default LLM:** ${apiKeys.defaultLlm || 'claude'}
+- **Tensorix Model:** ${apiKeys.tensorixModel || 'not set'}
+- **API Keys:** Claude=${maskKey(apiKeys.claude)}, OpenAI=${maskKey(apiKeys.openai)}, Gemini=${maskKey(apiKeys.gemini)}, Tensorix=${maskKey(apiKeys.tensorix)}
+- **Options:** generateUsesIfEmpty=${options.generateUsesIfEmpty || false}, generateSeo=${options.generateSeo !== false}
+- **Custom Prompt:** ${prompt ? `Yes (${prompt.length} chars)` : 'No (using default)'}
+- **Prompt has SEO fields:** ${(prompt || '').includes('htmlTitle') && (prompt || '').includes('metaDescription') ? 'Yes' : 'NO - OUTDATED PROMPT'}
+
+### Recent Logs (newest first)
+\`\`\`
+${logs.map(l => `[${l.type.toUpperCase()}] ${l.category} | ${l.message}${l.data ? '\n  ' + JSON.stringify(l.data) : ''}`).join('\n')}
+\`\`\`
+`;
+
+            navigator.clipboard.writeText(report).then(() => {
+                const toast = document.getElementById('copy-toast');
+                toast.classList.remove('hidden');
+                setTimeout(() => toast.classList.add('hidden'), 2000);
+            });
+        }
+
+        async function syncToServer() {
+            const logs = getLogs();
+            let apiKeys, options, prompt;
+            try { apiKeys = JSON.parse(localStorage.getItem(API_KEYS_STORAGE_KEY) || '{}'); } catch { apiKeys = {}; }
+            try { options = JSON.parse(localStorage.getItem(OPTIONS_STORAGE_KEY) || '{}'); } catch { options = {}; }
+            prompt = localStorage.getItem(REWRITE_PROMPT_KEY);
+
+            const maskKey = (key) => key ? key.substring(0, 8) + '...' : null;
+
+            const settings = {
+                defaultLlm: apiKeys.defaultLlm || 'claude',
+                tensorixModel: apiKeys.tensorixModel || 'not set',
+                hasClaudeKey: !!apiKeys.claude,
+                hasOpenAiKey: !!apiKeys.openai,
+                hasGeminiKey: !!apiKeys.gemini,
+                hasTensorixKey: !!apiKeys.tensorix,
+                options: options,
+                hasCustomPrompt: !!prompt,
+                promptLength: prompt?.length || 0,
+                promptHasSeoFields: (prompt || '').includes('htmlTitle') && (prompt || '').includes('metaDescription')
+            };
+
+            const btn = document.getElementById('sync-to-server');
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Syncing...';
+
+            try {
+                const response = await fetch('/api/debug/client-logs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ logs, settings })
+                });
+                const result = await response.json();
+                const toast = document.getElementById('copy-toast');
+                toast.textContent = `Synced ${result.received} logs to server!`;
+                toast.classList.remove('hidden');
+                setTimeout(() => toast.classList.add('hidden'), 2000);
+            } catch (err) {
+                alert('Sync failed: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Sync to Server';
+            }
+        }
+
+        // Event listeners
+        document.getElementById('sync-to-server').addEventListener('click', syncToServer);
+        document.getElementById('copy-for-claude').addEventListener('click', copyForClaude);
+        document.getElementById('clear-logs').addEventListener('click', clearLogs);
+        document.getElementById('refresh-logs').addEventListener('click', () => {
+            renderLogs();
+            renderSettings();
+        });
+
+        ['filter-error', 'filter-warn', 'filter-info', 'filter-success'].forEach(id => {
+            document.getElementById(id).addEventListener('change', renderLogs);
+        });
+
+        // Initial render
+        renderLogs();
+        renderSettings();
+
+        // Auto-refresh every 2 seconds
+        setInterval(() => {
+            renderLogs();
+            renderSettings();
+        }, 2000);
+    </script>
+</body>
+</html>
