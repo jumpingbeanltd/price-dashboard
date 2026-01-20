@@ -10,6 +10,8 @@ let identitySelections = {};
 let identityOverrides = {}; // Manual price overrides
 let roundingValue = 0;
 let zohoUpdateTimestamps = {}; // SKU -> last update timestamp
+let shopifyStockData = {}; // SKU -> stock level
+let zohoStockData = {}; // SKU -> stock level
 
 // --- LOGGING ---
 const LOG_STORAGE_KEY = 'price_dashboard_logs';
@@ -115,6 +117,40 @@ async function fetchExchangeRate() {
     } catch (error) {
         console.error('Failed to fetch exchange rate:', error);
         return null;
+    }
+}
+
+async function fetchShopifyStock() {
+    const token = localStorage.getItem('price_dashboard_shopify_token');
+    if (!token) {
+        return {};
+    }
+    try {
+        const response = await fetch('/api/shopify/stock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken: token })
+        });
+        if (!response.ok) throw new Error('Failed to fetch');
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+        return data.stock || {};
+    } catch (error) {
+        console.error('Failed to fetch Shopify stock:', error);
+        return {};
+    }
+}
+
+async function fetchZohoStock() {
+    try {
+        const response = await fetch('/api/zoho/stock');
+        if (!response.ok) throw new Error('Failed to fetch');
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+        return data.stock || {};
+    } catch (error) {
+        console.error('Failed to fetch Zoho stock:', error);
+        return {};
     }
 }
 
@@ -226,6 +262,8 @@ function getSortValue(product, key) {
     switch (key) {
         case 'sku': return product.sku || '';
         case 'stock': return product.set1?.stock ?? -1;
+        case 'shopifyStock': return shopifyStockData[product.sku] ?? -1;
+        case 'zohoStock': return zohoStockData[product.sku] ?? -1;
         case 'name': return product.set1?.name || '';
         case 'tradeId': return product.set1?.cost ?? -1;
         case 'digitalId': return product.set2?.cost ?? -1;
@@ -298,7 +336,7 @@ function renderTable() {
     const pageData = filteredData.slice(startIdx, endIdx);
 
     if (pageData.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="11" class="px-2 py-8 text-center text-gray-500">No results found</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="13" class="px-2 py-8 text-center text-gray-500">No results found</td></tr>';
         updatePagination(0, 0);
         return;
     }
@@ -316,7 +354,7 @@ function renderTable() {
         const set1Stock = product.set1?.stock;
         const set2Cost = product.set2?.cost;
         const fullName = product.set1?.name || 'Unknown';
-        const productName = fullName.length > 64 ? fullName.substring(0, 64) + '...' : fullName;
+        const productName = fullName.length > 24 ? fullName.substring(0, 24) + '...' : fullName;
         const diff = calculateDiff(product);
         const markup = calculateMarkup(product);
 
@@ -337,12 +375,17 @@ function renderTable() {
         // Get last Zoho update timestamp
         const lastZohoUpdate = zohoUpdateTimestamps[product.sku] || null;
 
+        const shopifyStock = shopifyStockData[product.sku];
+        const zohoStock = zohoStockData[product.sku];
+
         row.innerHTML = `
             <td class="px-2 py-1.5">
                 <input type="checkbox" class="row-check rounded border-gray-300" data-index="${globalIdx}">
             </td>
             <td class="px-2 py-1.5 text-gray-700">${product.sku}</td>
             <td class="px-2 py-1.5 text-gray-600">${formatStock(set1Stock)}</td>
+            <td class="px-2 py-1.5 text-gray-600">${formatStock(shopifyStock)}</td>
+            <td class="px-2 py-1.5 text-gray-600">${formatStock(zohoStock)}</td>
             <td class="px-2 py-1.5 text-gray-900" title="${fullName}">${productName}</td>
             <td class="px-2 py-1.5 font-medium text-blue-700">${formatPrice(set1Cost)}</td>
             <td class="px-2 py-1.5 font-medium text-green-700">${formatPrice(set2Cost)}</td>
@@ -494,6 +537,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.body.classList.add('loaded');
     }
     sortData();
+
+    // Fetch stock levels in background (don't block initial render)
+    Promise.all([
+        fetchShopifyStock(),
+        fetchZohoStock()
+    ]).then(([shopifyStock, zohoStock]) => {
+        shopifyStockData = shopifyStock;
+        zohoStockData = zohoStock;
+        renderTable(); // Re-render with stock data
+    });
 });
 
 // Sortable columns
@@ -749,7 +802,10 @@ Original Product Uses:
 
 Please provide:
 1. A rewritten description (2-3 concise paragraphs, plain text)
-2. A rewritten product uses section - MUST be formatted as an HTML unordered list like: <ul><li>Use 1</li><li>Use 2</li><li>Use 3</li></ul>`;
+2. A rewritten product uses section - MUST be formatted as an HTML unordered list with line breaks after each item for proper spacing:
+   <ul><li>Use 1</li><br><li>Use 2</li><br><li>Use 3</li></ul>
+
+   IMPORTANT: Always include <br> after each </li> tag (except the last one) to ensure proper line spacing in the rendered output.`;
 
 const DEFAULT_HTML_TITLE_RULES = `Generate an SEO-optimized HTML title tag:
 - Maximum 60 characters
@@ -1070,24 +1126,48 @@ async function rewriteWithLlm(product) {
 
     debugLog('info', 'rewrite', 'Raw LLM response received', { responseLength: result?.length, responsePreview: result?.substring(0, 200) });
 
-    // Parse JSON response
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-        try {
-            const parsed = JSON.parse(jsonMatch[0]);
-            debugLog('success', 'rewrite', `Rewrite complete for SKU: ${product.sku}`, {
-                hasDescription: !!parsed.rewrittenDescription,
-                hasUses: !!parsed.rewrittenProductUses,
-                hasHtmlTitle: !!parsed.htmlTitle,
-                hasMetaDesc: !!parsed.metaDescription
-            });
-            return parsed;
-        } catch (parseError) {
-            debugLog('error', 'rewrite', `JSON parse failed: ${parseError.message}`, { jsonAttempt: jsonMatch[0].substring(0, 200) });
-            throw new Error('Failed to parse LLM response as JSON');
+    // Check for null/empty response
+    if (!result) {
+        debugLog('error', 'rewrite', 'LLM returned empty response');
+        throw new Error('LLM returned empty response');
+    }
+
+    // Strip markdown code blocks if present
+    let cleanedResult = result.trim();
+    cleanedResult = cleanedResult.replace(/^```json\s*/i, '').replace(/^```\s*/i, '');
+    cleanedResult = cleanedResult.replace(/\s*```$/i, '');
+    cleanedResult = cleanedResult.trim();
+
+    // Try to parse directly first
+    try {
+        const parsed = JSON.parse(cleanedResult);
+        debugLog('success', 'rewrite', `Rewrite complete for SKU: ${product.sku}`, {
+            hasDescription: !!parsed.rewrittenDescription,
+            hasUses: !!parsed.rewrittenProductUses,
+            hasHtmlTitle: !!parsed.htmlTitle,
+            hasMetaDesc: !!parsed.metaDescription
+        });
+        return parsed;
+    } catch (directParseError) {
+        // Fallback: try to extract JSON with regex
+        const jsonMatch = cleanedResult.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                debugLog('success', 'rewrite', `Rewrite complete for SKU: ${product.sku}`, {
+                    hasDescription: !!parsed.rewrittenDescription,
+                    hasUses: !!parsed.rewrittenProductUses,
+                    hasHtmlTitle: !!parsed.htmlTitle,
+                    hasMetaDesc: !!parsed.metaDescription
+                });
+                return parsed;
+            } catch (parseError) {
+                debugLog('error', 'rewrite', `JSON parse failed: ${parseError.message}`, { jsonAttempt: jsonMatch[0].substring(0, 200) });
+                throw new Error('Failed to parse LLM response as JSON');
+            }
         }
     }
-    debugLog('error', 'rewrite', 'No JSON found in response', { responsePreview: result?.substring(0, 300) });
+    debugLog('error', 'rewrite', 'No JSON found in response', { responsePreview: cleanedResult?.substring(0, 300) });
     throw new Error('Invalid response format from LLM');
 }
 

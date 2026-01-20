@@ -874,6 +874,122 @@ export default {
       }
     }
 
+    // Shopify: Get stock levels for all products
+    if (url.pathname === '/api/shopify/stock' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { accessToken } = body;
+
+        if (!accessToken) {
+          return new Response(JSON.stringify({ error: 'Missing access token' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const shopifyHeaders = {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': accessToken
+        };
+
+        // Fetch products with inventory info using GraphQL
+        const stockQuery = `
+          query {
+            products(first: 250) {
+              edges {
+                node {
+                  variants(first: 10) {
+                    edges {
+                      node {
+                        sku
+                        inventoryQuantity
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+
+        const response = await fetch(`https://${env.SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+          method: 'POST',
+          headers: shopifyHeaders,
+          body: JSON.stringify({ query: stockQuery })
+        });
+
+        if (!response.ok) {
+          const err = await response.text();
+          throw new Error(`Shopify stock fetch failed: ${err}`);
+        }
+
+        const data = await response.json();
+
+        if (data.errors) {
+          throw new Error(`GraphQL error: ${JSON.stringify(data.errors)}`);
+        }
+
+        // Build SKU -> stock map
+        const stock = {};
+        const products = data.data?.products?.edges || [];
+        for (const product of products) {
+          const variants = product.node?.variants?.edges || [];
+          for (const variant of variants) {
+            const sku = variant.node?.sku;
+            const qty = variant.node?.inventoryQuantity;
+            if (sku && qty !== null) {
+              stock[sku] = qty;
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({ stock }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+
+    // Zoho Inventory: Get stock levels for all items
+    if (url.pathname === '/api/zoho/stock' && request.method === 'GET') {
+      try {
+        const accessToken = await getZohoAccessToken(env);
+
+        // Fetch all items with stock info
+        const response = await fetch(
+          `https://www.zohoapis.eu/inventory/v1/items?organization_id=${env.ZOHO_ORG_ID}&per_page=200`,
+          {
+            headers: { 'Authorization': `Zoho-oauthtoken ${accessToken}` }
+          }
+        );
+
+        const data = await response.json();
+        if (data.code !== 0) throw new Error(data.message || 'Failed to fetch items');
+
+        // Build SKU -> stock map
+        const stock = {};
+        const items = data.items || [];
+        for (const item of items) {
+          if (item.sku && item.stock_on_hand !== undefined) {
+            stock[item.sku] = item.stock_on_hand;
+          }
+        }
+
+        return new Response(JSON.stringify({ stock }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+
     // Serve static assets for all other routes
     try {
       const assetPath = url.pathname === '/' ? '/index.html' : url.pathname;
