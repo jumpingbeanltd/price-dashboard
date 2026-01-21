@@ -46,6 +46,15 @@
                     <button id="push-selected-zoho" class="px-4 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
                         Push Selected to Zoho
                     </button>
+                    <button id="match-stock-btn" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed" title="Copy Zoho stock levels to Shopify">
+                        Match Stock → Shopify
+                    </button>
+                    <select id="batch-status-select" class="px-2 py-1.5 text-sm border border-gray-300 rounded-md">
+                        <option value="">Set Status...</option>
+                        <option value="ACTIVE">Active</option>
+                        <option value="DRAFT">Draft</option>
+                        <option value="ARCHIVED">Archived</option>
+                    </select>
                     <span id="zoho-status" class="text-sm text-gray-500"></span>
                 </div>
                 <div class="flex items-center gap-2">
@@ -76,6 +85,7 @@
                             <th class="px-1 py-1 w-16"></th>
                             <th class="px-1 py-1 w-16"></th>
                             <th class="px-1 py-1 w-16"></th>
+                            <th class="px-1 py-1 w-20"></th>
                             <th class="px-1 py-1"><input type="text" id="filter-name" placeholder="Name" class="w-full px-1 py-0.5 text-xs border border-gray-300 rounded"></th>
                             <th class="px-1 py-1 w-20 bg-blue-50"></th>
                             <th class="px-1 py-1 w-20 bg-green-50"></th>
@@ -94,11 +104,14 @@
                             <th data-sort="stock" class="px-1 py-2 text-left font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none sortable w-16">
                                 <span class="sort-indicator">↕</span>Trade
                             </th>
+                            <th data-sort="zohoStock" class="px-1 py-2 text-left font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none sortable w-16">
+                                <span class="sort-indicator">↕</span>Zoho
+                            </th>
                             <th data-sort="shopifyStock" class="px-1 py-2 text-left font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none sortable w-16">
                                 <span class="sort-indicator">↕</span>Shopify
                             </th>
-                            <th data-sort="zohoStock" class="px-1 py-2 text-left font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none sortable w-16">
-                                <span class="sort-indicator">↕</span>Zoho
+                            <th data-sort="shopifyStatus" class="px-1 py-2 text-left font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none sortable w-20">
+                                <span class="sort-indicator">↕</span>Status
                             </th>
                             <th data-sort="name" class="px-1 py-2 text-left font-medium text-gray-600 cursor-pointer hover:bg-gray-100 select-none sortable">
                                 <span class="sort-indicator">↕</span>Name

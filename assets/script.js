@@ -12,6 +12,10 @@ let roundingValue = 0;
 let zohoUpdateTimestamps = {}; // SKU -> last update timestamp
 let shopifyStockData = {}; // SKU -> stock level
 let zohoStockData = {}; // SKU -> stock level
+let zohoStockOverrides = {}; // SKU -> manual override
+let shopifyStockOverrides = {}; // SKU -> manual override
+let shopifyStatusData = {}; // SKU -> status (ACTIVE, DRAFT, ARCHIVED)
+let shopifyProductIds = {}; // SKU -> Shopify product GID
 
 // --- LOGGING ---
 const LOG_STORAGE_KEY = 'price_dashboard_logs';
@@ -81,6 +85,7 @@ const exchangeRateEl = document.getElementById('exchange-rate-text');
 const identityFillAllEl = document.getElementById('identity-fill-all');
 const roundingSelectEl = document.getElementById('rounding-select');
 const pushSelectedZohoBtn = document.getElementById('push-selected-zoho');
+const matchStockBtn = document.getElementById('match-stock-btn');
 const zohoStatusEl = document.getElementById('zoho-status');
 
 // Pastel colors for alternating rows
@@ -123,7 +128,7 @@ async function fetchExchangeRate() {
 async function fetchShopifyStock() {
     const token = localStorage.getItem('price_dashboard_shopify_token');
     if (!token) {
-        return {};
+        return { stock: {}, status: {}, productIds: {} };
     }
     try {
         const response = await fetch('/api/shopify/stock', {
@@ -134,10 +139,14 @@ async function fetchShopifyStock() {
         if (!response.ok) throw new Error('Failed to fetch');
         const data = await response.json();
         if (data.error) throw new Error(data.error);
-        return data.stock || {};
+        return {
+            stock: data.stock || {},
+            status: data.status || {},
+            productIds: data.productIds || {}
+        };
     } catch (error) {
         console.error('Failed to fetch Shopify stock:', error);
-        return {};
+        return { stock: {}, status: {}, productIds: {} };
     }
 }
 
@@ -264,6 +273,7 @@ function getSortValue(product, key) {
         case 'stock': return product.set1?.stock ?? -1;
         case 'shopifyStock': return shopifyStockData[product.sku] ?? -1;
         case 'zohoStock': return zohoStockData[product.sku] ?? -1;
+        case 'shopifyStatus': return shopifyStatusData[product.sku] || '';
         case 'name': return product.set1?.name || '';
         case 'tradeId': return product.set1?.cost ?? -1;
         case 'digitalId': return product.set2?.cost ?? -1;
@@ -304,6 +314,22 @@ function sortData() {
     renderTable();
 }
 
+function createStatusDropdown(sku, currentStatus) {
+    const statusColors = {
+        'ACTIVE': 'bg-green-100 text-green-800',
+        'DRAFT': 'bg-blue-100 text-blue-800',
+        'ARCHIVED': 'bg-gray-100 text-gray-600'
+    };
+    const colorClass = statusColors[currentStatus] || 'bg-white';
+
+    return `<select class="status-select w-full px-1 py-0.5 text-xs rounded border border-gray-300 ${colorClass}" data-sku="${sku}">
+        <option value="" ${!currentStatus ? 'selected' : ''}>—</option>
+        <option value="ACTIVE" ${currentStatus === 'ACTIVE' ? 'selected' : ''}>Active</option>
+        <option value="DRAFT" ${currentStatus === 'DRAFT' ? 'selected' : ''}>Draft</option>
+        <option value="ARCHIVED" ${currentStatus === 'ARCHIVED' ? 'selected' : ''}>Archived</option>
+    </select>`;
+}
+
 function createIdentityDropdown(sku, currentSelection) {
     const options = [
         { value: '', label: 'Select...' },
@@ -336,7 +362,7 @@ function renderTable() {
     const pageData = filteredData.slice(startIdx, endIdx);
 
     if (pageData.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="13" class="px-2 py-8 text-center text-gray-500">No results found</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="14" class="px-2 py-8 text-center text-gray-500">No results found</td></tr>';
         updatePagination(0, 0);
         return;
     }
@@ -377,6 +403,7 @@ function renderTable() {
 
         const shopifyStock = shopifyStockData[product.sku];
         const zohoStock = zohoStockData[product.sku];
+        const shopifyStatus = shopifyStatusData[product.sku];
 
         row.innerHTML = `
             <td class="px-2 py-1.5">
@@ -384,8 +411,25 @@ function renderTable() {
             </td>
             <td class="px-2 py-1.5 text-gray-700">${product.sku}</td>
             <td class="px-2 py-1.5 text-gray-600">${formatStock(set1Stock)}</td>
-            <td class="px-2 py-1.5 text-gray-600">${formatStock(shopifyStock)}</td>
-            <td class="px-2 py-1.5 text-gray-600">${formatStock(zohoStock)}</td>
+            <td class="px-2 py-1.5">
+                <input type="text"
+                    class="zoho-stock-input w-14 px-1 py-0.5 text-sm text-gray-600 border border-gray-300 rounded focus:border-blue-500 focus:outline-none ${zohoStockOverrides[product.sku] !== undefined ? 'bg-yellow-100' : 'bg-white'}"
+                    data-sku="${product.sku}"
+                    value="${zohoStockOverrides[product.sku] !== undefined ? zohoStockOverrides[product.sku] : (zohoStock ?? '')}"
+                    placeholder="—"
+                    inputmode="numeric">
+            </td>
+            <td class="px-2 py-1.5">
+                <input type="text"
+                    class="shopify-stock-input w-14 px-1 py-0.5 text-sm text-gray-600 border border-gray-300 rounded focus:border-blue-500 focus:outline-none ${shopifyStockOverrides[product.sku] !== undefined ? 'bg-yellow-100' : 'bg-white'}"
+                    data-sku="${product.sku}"
+                    value="${shopifyStockOverrides[product.sku] !== undefined ? shopifyStockOverrides[product.sku] : (shopifyStock ?? '')}"
+                    placeholder="—"
+                    inputmode="numeric">
+            </td>
+            <td class="px-2 py-1.5">
+                ${createStatusDropdown(product.sku, shopifyStatus)}
+            </td>
             <td class="px-2 py-1.5 text-gray-900" title="${fullName}">${productName}</td>
             <td class="px-2 py-1.5 font-medium text-blue-700">${formatPrice(set1Cost)}</td>
             <td class="px-2 py-1.5 font-medium text-green-700">${formatPrice(set2Cost)}</td>
@@ -505,6 +549,72 @@ function updateIdentityFromInput(sku, value) {
     }
 }
 
+async function updateShopifyStatus(sku, newStatus, selectElement) {
+    const shopifyToken = localStorage.getItem('price_dashboard_shopify_token');
+    if (!shopifyToken) {
+        zohoStatusEl.textContent = 'Not connected to Shopify';
+        zohoStatusEl.className = 'text-sm text-orange-500';
+        return;
+    }
+
+    const productId = shopifyProductIds[sku];
+    if (!productId) {
+        zohoStatusEl.textContent = `No Shopify product ID for ${sku}`;
+        zohoStatusEl.className = 'text-sm text-orange-500';
+        return;
+    }
+
+    // Disable select during update
+    if (selectElement) selectElement.disabled = true;
+
+    try {
+        const response = await fetch('/api/shopify/update-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                accessToken: shopifyToken,
+                productId: productId,
+                status: newStatus
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error);
+        }
+
+        // Update local state
+        shopifyStatusData[sku] = newStatus;
+
+        // Update dropdown styling
+        if (selectElement) {
+            selectElement.className = `status-select w-full px-1 py-0.5 text-xs rounded border border-gray-300 ${getStatusColorClass(newStatus)}`;
+        }
+
+        zohoStatusEl.textContent = `Status updated: ${sku} → ${newStatus}`;
+        zohoStatusEl.className = 'text-sm text-green-600';
+    } catch (error) {
+        zohoStatusEl.textContent = `Failed: ${error.message}`;
+        zohoStatusEl.className = 'text-sm text-red-500';
+        // Revert dropdown to previous value
+        if (selectElement) {
+            selectElement.value = shopifyStatusData[sku] || '';
+        }
+    } finally {
+        if (selectElement) selectElement.disabled = false;
+    }
+}
+
+function getStatusColorClass(status) {
+    const statusColors = {
+        'ACTIVE': 'bg-green-100 text-green-800',
+        'DRAFT': 'bg-blue-100 text-blue-800',
+        'ARCHIVED': 'bg-gray-100 text-gray-600'
+    };
+    return statusColors[status] || 'bg-white';
+}
+
 function fillAllIdentity(selection) {
     productData.forEach(product => {
         identitySelections[product.sku] = selection;
@@ -542,8 +652,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     Promise.all([
         fetchShopifyStock(),
         fetchZohoStock()
-    ]).then(([shopifyStock, zohoStock]) => {
-        shopifyStockData = shopifyStock;
+    ]).then(([shopifyData, zohoStock]) => {
+        shopifyStockData = shopifyData.stock;
+        shopifyStatusData = shopifyData.status;
+        shopifyProductIds = shopifyData.productIds;
         zohoStockData = zohoStock;
         renderTable(); // Re-render with stock data
     });
@@ -604,6 +716,14 @@ tableBody.addEventListener('change', (e) => {
         const sku = e.target.dataset.sku;
         updateIdentityFromDropdown(sku, e.target.value);
     }
+
+    if (e.target.classList.contains('status-select')) {
+        const sku = e.target.dataset.sku;
+        const newStatus = e.target.value;
+        if (newStatus) {
+            updateShopifyStatus(sku, newStatus, e.target);
+        }
+    }
 });
 
 tableBody.addEventListener('input', (e) => {
@@ -624,6 +744,40 @@ tableBody.addEventListener('input', (e) => {
             e.target.classList.remove('bg-white');
             e.target.classList.add('bg-yellow-100');
         } else {
+            e.target.classList.remove('bg-yellow-100');
+            e.target.classList.add('bg-white');
+        }
+    }
+
+    if (e.target.classList.contains('zoho-stock-input')) {
+        // Sanitize to integers only
+        let value = e.target.value.replace(/[^0-9]/g, '');
+        e.target.value = value;
+
+        const sku = e.target.dataset.sku;
+        if (value !== '') {
+            zohoStockOverrides[sku] = parseInt(value);
+            e.target.classList.remove('bg-white');
+            e.target.classList.add('bg-yellow-100');
+        } else {
+            delete zohoStockOverrides[sku];
+            e.target.classList.remove('bg-yellow-100');
+            e.target.classList.add('bg-white');
+        }
+    }
+
+    if (e.target.classList.contains('shopify-stock-input')) {
+        // Sanitize to integers only
+        let value = e.target.value.replace(/[^0-9]/g, '');
+        e.target.value = value;
+
+        const sku = e.target.dataset.sku;
+        if (value !== '') {
+            shopifyStockOverrides[sku] = parseInt(value);
+            e.target.classList.remove('bg-white');
+            e.target.classList.add('bg-yellow-100');
+        } else {
+            delete shopifyStockOverrides[sku];
             e.target.classList.remove('bg-yellow-100');
             e.target.classList.add('bg-white');
         }
@@ -747,6 +901,188 @@ pushSelectedZohoBtn.addEventListener('click', async () => {
         pushSelectedZohoBtn.disabled = false;
     }
 });
+
+// Match Stock to Shopify (copy Zoho stock → Shopify)
+if (matchStockBtn) {
+    matchStockBtn.addEventListener('click', async () => {
+        console.log('Match Stock button clicked');
+    const checkedBoxes = tableBody.querySelectorAll('.row-check:checked');
+    if (checkedBoxes.length === 0) {
+        zohoStatusEl.textContent = 'No items selected';
+        zohoStatusEl.className = 'text-sm text-orange-500';
+        return;
+    }
+
+    // Check for Shopify token
+    const shopifyToken = localStorage.getItem('price_dashboard_shopify_token');
+    if (!shopifyToken) {
+        zohoStatusEl.textContent = 'Not connected to Shopify - go to Descriptions tab to connect';
+        zohoStatusEl.className = 'text-sm text-orange-500';
+        return;
+    }
+
+    // Gather selected items with Zoho stock (use override if available)
+    const itemsToUpdate = [];
+    checkedBoxes.forEach(checkbox => {
+        const row = checkbox.closest('tr');
+        const sku = row.dataset.sku;
+        // Use override if set, otherwise use fetched Zoho stock
+        const quantity = zohoStockOverrides[sku] !== undefined
+            ? zohoStockOverrides[sku]
+            : zohoStockData[sku];
+
+        if (quantity !== undefined && quantity !== null) {
+            itemsToUpdate.push({ sku, quantity });
+        }
+    });
+
+    if (itemsToUpdate.length === 0) {
+        zohoStatusEl.textContent = 'No items with Zoho stock data';
+        zohoStatusEl.className = 'text-sm text-orange-500';
+        return;
+    }
+
+    // Disable button and show progress
+    matchStockBtn.disabled = true;
+    zohoStatusEl.textContent = `Updating ${itemsToUpdate.length} items in Shopify...`;
+    zohoStatusEl.className = 'text-sm text-blue-500';
+
+    let success = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const item of itemsToUpdate) {
+        try {
+            zohoStatusEl.textContent = `Updating ${success + failed + 1}/${itemsToUpdate.length}...`;
+
+            const response = await fetch('/api/shopify/update-stock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    accessToken: shopifyToken,
+                    sku: item.sku,
+                    quantity: item.quantity
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Update local Shopify stock data
+            shopifyStockData[item.sku] = item.quantity;
+            success++;
+        } catch (error) {
+            failed++;
+            errors.push({ sku: item.sku, error: error.message });
+        }
+    }
+
+    // Re-render table to show updated stock
+    renderTable();
+
+    // Show results
+    if (failed === 0) {
+        zohoStatusEl.textContent = `Updated ${success} items in Shopify`;
+        zohoStatusEl.className = 'text-sm text-green-600';
+    } else {
+        zohoStatusEl.textContent = `Updated ${success}, failed ${failed}`;
+        zohoStatusEl.className = 'text-sm text-orange-500';
+    }
+
+    matchStockBtn.disabled = false;
+});
+} else {
+    console.error('matchStockBtn not found in DOM');
+}
+
+// Batch status selector
+const batchStatusSelect = document.getElementById('batch-status-select');
+if (batchStatusSelect) {
+    batchStatusSelect.addEventListener('change', async (e) => {
+        const newStatus = e.target.value;
+        if (!newStatus) return;
+
+        const checkedBoxes = tableBody.querySelectorAll('.row-check:checked');
+        if (checkedBoxes.length === 0) {
+            zohoStatusEl.textContent = 'No items selected';
+            zohoStatusEl.className = 'text-sm text-orange-500';
+            batchStatusSelect.value = '';
+            return;
+        }
+
+        const shopifyToken = localStorage.getItem('price_dashboard_shopify_token');
+        if (!shopifyToken) {
+            zohoStatusEl.textContent = 'Not connected to Shopify';
+            zohoStatusEl.className = 'text-sm text-orange-500';
+            batchStatusSelect.value = '';
+            return;
+        }
+
+        // Gather SKUs with product IDs
+        const itemsToUpdate = [];
+        checkedBoxes.forEach(checkbox => {
+            const row = checkbox.closest('tr');
+            const sku = row.dataset.sku;
+            const productId = shopifyProductIds[sku];
+            if (productId) {
+                itemsToUpdate.push({ sku, productId });
+            }
+        });
+
+        if (itemsToUpdate.length === 0) {
+            zohoStatusEl.textContent = 'No items with Shopify product IDs';
+            zohoStatusEl.className = 'text-sm text-orange-500';
+            batchStatusSelect.value = '';
+            return;
+        }
+
+        batchStatusSelect.disabled = true;
+        let success = 0;
+        let failed = 0;
+
+        for (const item of itemsToUpdate) {
+            try {
+                zohoStatusEl.textContent = `Updating status ${success + failed + 1}/${itemsToUpdate.length}...`;
+                zohoStatusEl.className = 'text-sm text-blue-500';
+
+                const response = await fetch('/api/shopify/update-status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        accessToken: shopifyToken,
+                        productId: item.productId,
+                        status: newStatus
+                    })
+                });
+
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                shopifyStatusData[item.sku] = newStatus;
+                success++;
+            } catch (error) {
+                failed++;
+            }
+        }
+
+        // Re-render table to show updated statuses
+        renderTable();
+
+        if (failed === 0) {
+            zohoStatusEl.textContent = `Set ${success} items to ${newStatus}`;
+            zohoStatusEl.className = 'text-sm text-green-600';
+        } else {
+            zohoStatusEl.textContent = `Updated ${success}, failed ${failed}`;
+            zohoStatusEl.className = 'text-sm text-orange-500';
+        }
+
+        batchStatusSelect.disabled = false;
+        batchStatusSelect.value = '';
+    });
+}
 
 // ============================================
 // PRODUCT DESCRIPTIONS TAB

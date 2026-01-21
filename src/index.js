@@ -10,7 +10,7 @@ const SHEETS = {
 const DEBUG_CACHE_KEY = 'https://dashboard.popid.ie/debug-logs-cache';
 
 // Shopify configuration - set these in wrangler.toml or Cloudflare dashboard
-const SHOPIFY_SCOPES = 'write_products,read_products';
+const SHOPIFY_SCOPES = 'write_products,read_products,read_inventory,write_inventory';
 const SHOPIFY_API_VERSION = '2024-10';
 
 /**
@@ -220,6 +220,21 @@ function combineData(tradeIdData, digitalIdData) {
     .filter(item => item.set1.cost !== null && item.set2.cost !== null);
 }
 
+// HTTP Basic Auth credentials
+const BASIC_AUTH_USER = 'admin';
+const BASIC_AUTH_PASS = '1q2w3e4r';
+
+function checkBasicAuth(request) {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    return false;
+  }
+  const base64Credentials = authHeader.slice(6);
+  const credentials = atob(base64Credentials);
+  const [username, password] = credentials.split(':');
+  return username === BASIC_AUTH_USER && password === BASIC_AUTH_PASS;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -228,11 +243,22 @@ export default {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     };
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
+    }
+
+    // Check Basic Auth for all requests
+    if (!checkBasicAuth(request)) {
+      return new Response('Unauthorized', {
+        status: 401,
+        headers: {
+          'WWW-Authenticate': 'Basic realm="Product Dashboard"',
+          ...corsHeaders
+        }
+      });
     }
 
     // Debug logs endpoint - POST to store logs from client (using Cache API for persistence)
@@ -892,12 +918,14 @@ export default {
           'X-Shopify-Access-Token': accessToken
         };
 
-        // Fetch products with inventory info using GraphQL
+        // Fetch products with inventory info and status using GraphQL
         const stockQuery = `
           query {
             products(first: 250) {
               edges {
                 node {
+                  id
+                  status
                   variants(first: 10) {
                     edges {
                       node {
@@ -929,21 +957,285 @@ export default {
           throw new Error(`GraphQL error: ${JSON.stringify(data.errors)}`);
         }
 
-        // Build SKU -> stock map
+        // Build SKU -> stock map and SKU -> status map
         const stock = {};
+        const status = {};
+        const productIds = {};
         const products = data.data?.products?.edges || [];
         for (const product of products) {
+          const productStatus = product.node?.status;
+          const productId = product.node?.id;
           const variants = product.node?.variants?.edges || [];
           for (const variant of variants) {
             const sku = variant.node?.sku;
             const qty = variant.node?.inventoryQuantity;
-            if (sku && qty !== null) {
-              stock[sku] = qty;
+            if (sku) {
+              if (qty !== null) {
+                stock[sku] = qty;
+              }
+              if (productStatus) {
+                status[sku] = productStatus;
+              }
+              if (productId) {
+                productIds[sku] = productId;
+              }
             }
           }
         }
 
-        return new Response(JSON.stringify({ stock }), {
+        return new Response(JSON.stringify({ stock, status, productIds }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+
+    // Shopify: Update stock level for a product variant by SKU
+    if (url.pathname === '/api/shopify/update-stock' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { accessToken, sku, quantity } = body;
+
+        if (!accessToken) {
+          return new Response(JSON.stringify({ error: 'Missing access token' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        if (!sku || quantity === undefined) {
+          return new Response(JSON.stringify({ error: 'Missing SKU or quantity' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const shopifyHeaders = {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': accessToken
+        };
+
+        // Step 1: Find product variant by SKU and get inventory_item_id
+        const findVariantQuery = `
+          query {
+            productVariants(first: 1, query: "sku:${sku}") {
+              edges {
+                node {
+                  id
+                  sku
+                  inventoryItem {
+                    id
+                    inventoryLevels(first: 1) {
+                      edges {
+                        node {
+                          id
+                          location {
+                            id
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+
+        const variantResponse = await fetch(`https://${env.SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+          method: 'POST',
+          headers: shopifyHeaders,
+          body: JSON.stringify({ query: findVariantQuery })
+        });
+
+        if (!variantResponse.ok) {
+          const err = await variantResponse.text();
+          throw new Error(`Shopify variant lookup failed: ${err}`);
+        }
+
+        const variantData = await variantResponse.json();
+
+        if (variantData.errors) {
+          throw new Error(`GraphQL error: ${JSON.stringify(variantData.errors)}`);
+        }
+
+        const variants = variantData.data?.productVariants?.edges || [];
+        if (variants.length === 0) {
+          return new Response(JSON.stringify({ error: `Variant not found with SKU: ${sku}` }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const variant = variants[0].node;
+        const inventoryItemId = variant.inventoryItem?.id;
+        const inventoryLevels = variant.inventoryItem?.inventoryLevels?.edges || [];
+
+        if (!inventoryItemId || inventoryLevels.length === 0) {
+          return new Response(JSON.stringify({ error: `No inventory tracking for SKU: ${sku}` }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const locationId = inventoryLevels[0].node.location.id;
+
+        // Step 2: Set the inventory quantity using inventorySetOnHandQuantities
+        const setQuantityMutation = `
+          mutation inventorySetOnHandQuantities($input: InventorySetOnHandQuantitiesInput!) {
+            inventorySetOnHandQuantities(input: $input) {
+              inventoryAdjustmentGroup {
+                createdAt
+                reason
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        const setQuantityResponse = await fetch(`https://${env.SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+          method: 'POST',
+          headers: shopifyHeaders,
+          body: JSON.stringify({
+            query: setQuantityMutation,
+            variables: {
+              input: {
+                reason: "correction",
+                setQuantities: [{
+                  inventoryItemId: inventoryItemId,
+                  locationId: locationId,
+                  quantity: parseInt(quantity)
+                }]
+              }
+            }
+          })
+        });
+
+        if (!setQuantityResponse.ok) {
+          const err = await setQuantityResponse.text();
+          throw new Error(`Shopify inventory update failed: ${err}`);
+        }
+
+        const setQuantityData = await setQuantityResponse.json();
+
+        if (setQuantityData.errors) {
+          throw new Error(`GraphQL error: ${JSON.stringify(setQuantityData.errors)}`);
+        }
+
+        const userErrors = setQuantityData.data?.inventorySetOnHandQuantities?.userErrors || [];
+        if (userErrors.length > 0) {
+          throw new Error(`Inventory update error: ${userErrors.map(e => e.message).join(', ')}`);
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          sku,
+          quantity: parseInt(quantity),
+          inventoryItemId,
+          locationId
+        }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+
+    // Shopify: Update product status by product ID
+    if (url.pathname === '/api/shopify/update-status' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { accessToken, productId, status } = body;
+
+        if (!accessToken) {
+          return new Response(JSON.stringify({ error: 'Missing access token' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        if (!productId || !status) {
+          return new Response(JSON.stringify({ error: 'Missing productId or status' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const validStatuses = ['ACTIVE', 'DRAFT', 'ARCHIVED'];
+        if (!validStatuses.includes(status)) {
+          return new Response(JSON.stringify({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders }
+          });
+        }
+
+        const shopifyHeaders = {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': accessToken
+        };
+
+        const updateStatusMutation = `
+          mutation productUpdate($input: ProductInput!) {
+            productUpdate(input: $input) {
+              product {
+                id
+                status
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        const response = await fetch(`https://${env.SHOPIFY_STORE}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+          method: 'POST',
+          headers: shopifyHeaders,
+          body: JSON.stringify({
+            query: updateStatusMutation,
+            variables: {
+              input: {
+                id: productId,
+                status: status
+              }
+            }
+          })
+        });
+
+        if (!response.ok) {
+          const err = await response.text();
+          throw new Error(`Shopify status update failed: ${err}`);
+        }
+
+        const data = await response.json();
+
+        if (data.errors) {
+          throw new Error(`GraphQL error: ${JSON.stringify(data.errors)}`);
+        }
+
+        const userErrors = data.data?.productUpdate?.userErrors || [];
+        if (userErrors.length > 0) {
+          throw new Error(`Status update error: ${userErrors.map(e => e.message).join(', ')}`);
+        }
+
+        const updatedProduct = data.data?.productUpdate?.product;
+
+        return new Response(JSON.stringify({
+          success: true,
+          productId,
+          status: updatedProduct?.status
+        }), {
           headers: { 'Content-Type': 'application/json', ...corsHeaders }
         });
       } catch (error) {

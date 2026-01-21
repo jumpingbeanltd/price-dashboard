@@ -12,10 +12,13 @@ A Cloudflare Workers application for managing product pricing and descriptions a
 
 ### Product Pricing Tab
 - Compare prices from Trade ID and Digital ID data sources
-- Stock levels from three sources:
+- Stock levels from three sources (editable):
   - **Trade** - from Google Sheets (Trade ID)
-  - **Shopify** - fetched via GraphQL API
-  - **Zoho** - fetched via Zoho Inventory API
+  - **Zoho** - fetched via Zoho Inventory API (editable)
+  - **Shopify** - fetched via GraphQL API (editable)
+- **Shopify Status** column with dropdown (Active/Draft/Archived)
+- **Match Stock → Shopify** button - sync Zoho stock levels to Shopify
+- **Batch Status** selector - set status for multiple products at once
 - SKU-based matching with automatic deduplication
 - GBP to EUR conversion using live ECB exchange rate
 - Markup options: Digital ID €, +10%, +20%, +30%, +50%, +75%, +100%, +150%, +200%
@@ -25,6 +28,7 @@ A Cloudflare Workers application for managing product pricing and descriptions a
 - Sortable columns, text filters, pagination (50 per page)
 - Shift-click for batch row selection
 - Rounding options: €0.05, €0.10, €0.50, €1.00
+- Editable fields turn yellow to indicate manual overrides
 
 ### Product Descriptions Tab
 - View/edit product descriptions and uses from Google Sheets
@@ -97,7 +101,9 @@ price-description-dashboard/
 | `/api/shopify/auth` | GET | Start Shopify OAuth flow |
 | `/api/shopify/callback` | GET | Shopify OAuth callback |
 | `/api/shopify/sync` | POST | Sync description/SEO to Shopify |
-| `/api/shopify/stock` | POST | Get all Shopify stock levels |
+| `/api/shopify/stock` | POST | Get all Shopify stock levels and statuses |
+| `/api/shopify/update-stock` | POST | Update Shopify inventory level by SKU |
+| `/api/shopify/update-status` | POST | Update Shopify product status |
 | `/api/debug/sheets` | GET | List all sheet names |
 | `/api/debug/digitalid` | GET | View raw Digital ID data |
 | `/api/debug/description` | GET | View raw Description sheet data |
@@ -149,7 +155,7 @@ The frontend stores state in localStorage:
 ### Shopify
 - **API Version**: 2024-10
 - **Auth**: OAuth2 (token stored in browser localStorage)
-- **Scopes**: `write_products,read_products`
+- **Scopes**: `write_products,read_products,read_inventory,write_inventory`
 - **Updates via GraphQL**:
   - `descriptionHtml` - product description
   - `seo.title` - HTML title tag
@@ -158,6 +164,13 @@ The frontend stores state in localStorage:
 
 ## Recent Updates (Jan 2026)
 
+- **HTTP Basic Auth** protection added (username: admin)
+- **Match Stock → Shopify** button to sync Zoho stock levels to Shopify
+- **Shopify Status column** with dropdown (Active/Draft/Archived)
+- **Batch status selector** to update multiple products at once
+- **Editable stock fields** for Zoho and Shopify columns (yellow = override)
+- Reordered stock columns: Trade | Zoho | Shopify
+- Added Shopify inventory write permissions (`read_inventory`, `write_inventory`)
 - Added Shopify and Zoho stock columns to pricing table
 - Renamed "Stock" column to "Trade"
 - Fixed LLM response parsing for markdown-wrapped JSON (```json blocks)
@@ -174,6 +187,12 @@ The frontend stores state in localStorage:
 - User's saved prompt may be outdated - click "Reset to Default" in Prompt settings to get latest SEO format
 - Shopify stock fetch limited to first 250 products (pagination not implemented)
 
+## Authentication
+
+The dashboard is protected with HTTP Basic Auth:
+- **Username**: `admin`
+- **Password**: Set in `src/index.js` (`BASIC_AUTH_PASS` constant)
+
 ## Version
 
-Current: v1.3
+Current: v1.4
